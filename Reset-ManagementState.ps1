@@ -5,22 +5,24 @@ param(
 
     [Parameter(Mandatory = $false)]
     [AllowNull()]
-    [Nullable[bool]]$NoSSLCheck = $null
+    [Nullable[bool]]$NoSSLCheck = $null,
+
+    [Parameter(Mandatory = $false)]
+    [string]$Password = 'Administrator'
 )
 
 function ConvertTo-ClientArray {
     <#
     .SYNOPSIS
-    Konvertiert Eingabewerte in ein bereinigtes Client-Array.
+    Converts raw input values into a cleaned client array.
 
     .DESCRIPTION
-    Diese Funktion nimmt einen String oder ein String-Array entgegen, trennt die Werte
-    robust an Zeilenumbrüchen, Kommas oder Semikolons und entfernt leere Einträge.
-    Zusätzlich wird geprüft, ob jeder Eintrag wie eine IPv4-Adresse oder ein FQDN/Hostname
-    aussieht. Das Ergebnis wird immer als [string[]] zurückgegeben.
+    Accepts a string or string array, splits values by newlines/commas/semicolons,
+    trims whitespace, removes empty entries, and validates each entry as IPv4 or
+    host/FQDN. Always returns [string[]].
 
     .PARAMETER InputValues
-    Die Rohwerte aus GUI oder Startparameter "-ClientList".
+    Raw values from GUI or from the -ClientList parameter.
 
     .OUTPUTS
     [string[]]
@@ -38,7 +40,7 @@ function ConvertTo-ClientArray {
         Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
 
     if (-not $items) {
-        throw "Es wurden keine Client-Adressen angegeben."
+        throw 'No client addresses were provided.'
     }
 
     $ipPattern = '^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)$'
@@ -46,7 +48,7 @@ function ConvertTo-ClientArray {
 
     $invalid = $items | Where-Object { $_ -notmatch $ipPattern -and $_ -notmatch $fqdnPattern }
     if ($invalid) {
-        throw "Ungültige Adresse(n): $($invalid -join ', ')"
+        throw "Invalid address(es): $($invalid -join ', ')"
     }
 
     return [string[]]$items
@@ -55,24 +57,31 @@ function ConvertTo-ClientArray {
 function Get-ClientInputFromGui {
     <#
     .SYNOPSIS
-    Öffnet ein GUI-Fenster zur Eingabe von Client-Adressen und SSL-Option.
+    Opens a GUI dialog for client addresses, password, and SSL option.
 
     .DESCRIPTION
-    Zeigt ein kompaktes Dialogfenster mit einer mehrzeiligen Textbox (Standardhöhe für
-    ca. 10 Zeilen), einer Beschriftung sowie OK/Abbrechen-Buttons. Zusätzlich kann per
-    Checkbox festgelegt werden, ob die SSL-Zertifikatsprüfung deaktiviert werden soll.
+    Displays a compact Windows Forms dialog with a multiline address textbox
+    (default height for ~10 lines), a password input line, an SSL checkbox,
+    and OK/Cancel buttons.
 
     .PARAMETER InitialNoSSLCheck
-    Vorbelegung der Checkbox für die SSL-Prüfung.
+    Initial checkbox state for SSL validation behavior.
+
+    .PARAMETER InitialPassword
+    Initial value shown in the password input textbox.
 
     .OUTPUTS
-    [pscustomobject] mit den Eigenschaften:
+    [pscustomobject] with properties:
     - Clients ([string[]])
     - NoSSLCheck ([bool])
+    - Password ([string])
     #>
     param(
         [Parameter(Mandatory = $true)]
-        [bool]$InitialNoSSLCheck
+        [bool]$InitialNoSSLCheck,
+
+        [Parameter(Mandatory = $true)]
+        [string]$InitialPassword
     )
 
     Add-Type -AssemblyName System.Windows.Forms
@@ -81,7 +90,7 @@ function Get-ClientInputFromGui {
     $form = New-Object System.Windows.Forms.Form
     $form.Text = 'Client addresses'
     $form.StartPosition = 'CenterScreen'
-    $form.Size = New-Object System.Drawing.Size(540, 380)
+    $form.Size = New-Object System.Drawing.Size(540, 440)
     $form.FormBorderStyle = 'FixedDialog'
     $form.MaximizeBox = $false
     $form.MinimizeBox = $false
@@ -104,51 +113,76 @@ function Get-ClientInputFromGui {
     $lineHeight = [System.Windows.Forms.TextRenderer]::MeasureText('A', $textBox.Font).Height
     $textBox.Height = ($lineHeight * 10) + 10
 
+    $passwordLabel = New-Object System.Windows.Forms.Label
+    $passwordLabel.AutoSize = $true
+    $passwordLabel.Location = New-Object System.Drawing.Point(12, 258)
+    $passwordLabel.Text = 'Enter Administrative password. Factory-Default: Administrator'
+
+    $passwordTextBox = New-Object System.Windows.Forms.TextBox
+    $passwordTextBox.Location = New-Object System.Drawing.Point(12, 280)
+    $passwordTextBox.Size = New-Object System.Drawing.Size(500, 24)
+    $passwordTextBox.Multiline = $false
+    $passwordTextBox.Text = $InitialPassword
+
     $sslCheckBox = New-Object System.Windows.Forms.CheckBox
     $sslCheckBox.AutoSize = $true
-    $sslCheckBox.Location = New-Object System.Drawing.Point(12, 252)
+    $sslCheckBox.Location = New-Object System.Drawing.Point(12, 315)
     $sslCheckBox.Text = 'Disable SSL certificate validation (-NoSSLCheck)'
     $sslCheckBox.Checked = $InitialNoSSLCheck
 
     $okButton = New-Object System.Windows.Forms.Button
     $okButton.Text = 'OK'
-    $okButton.Location = New-Object System.Drawing.Point(356, 295)
+    $okButton.Location = New-Object System.Drawing.Point(356, 360)
     $okButton.Size = New-Object System.Drawing.Size(75, 28)
     $okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
 
     $cancelButton = New-Object System.Windows.Forms.Button
-    $cancelButton.Text = 'Abbrechen'
-    $cancelButton.Location = New-Object System.Drawing.Point(437, 295)
+    $cancelButton.Text = 'Cancel'
+    $cancelButton.Location = New-Object System.Drawing.Point(437, 360)
     $cancelButton.Size = New-Object System.Drawing.Size(75, 28)
     $cancelButton.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
 
-    $form.Controls.AddRange(@($label, $textBox, $sslCheckBox, $okButton, $cancelButton))
+    $form.Controls.AddRange(@(
+            $label,
+            $textBox,
+            $passwordLabel,
+            $passwordTextBox,
+            $sslCheckBox,
+            $okButton,
+            $cancelButton
+        ))
     $form.AcceptButton = $okButton
     $form.CancelButton = $cancelButton
 
     $dialogResult = $form.ShowDialog()
     if ($dialogResult -ne [System.Windows.Forms.DialogResult]::OK) {
-        throw 'Abbruch durch Benutzer.'
+        throw 'Canceled by user.'
     }
 
     [pscustomobject]@{
         Clients = (ConvertTo-ClientArray -InputValues @($textBox.Lines))
         NoSSLCheck = [bool]$sslCheckBox.Checked
+        Password = $passwordTextBox.Text
     }
 }
 
 $defaultNoSSLCheck = $true
 $effectiveNoSSLCheck = if ($null -ne $NoSSLCheck) { [bool]$NoSSLCheck } else { $defaultNoSSLCheck }
+$effectivePassword = if ([string]::IsNullOrWhiteSpace($Password)) { 'Administrator' } else { $Password }
 
 try {
     if ($PSBoundParameters.ContainsKey('ClientList') -and $null -ne $ClientList -and $ClientList.Count -gt 0) {
-        # Nur -ClientList unterdrückt die GUI.
+        # Only -ClientList suppresses the GUI.
         $clients = ConvertTo-ClientArray -InputValues $ClientList
     }
     else {
-        $guiInput = Get-ClientInputFromGui -InitialNoSSLCheck $effectiveNoSSLCheck
+        $guiInput = Get-ClientInputFromGui -InitialNoSSLCheck $effectiveNoSSLCheck -InitialPassword $effectivePassword
         $clients = $guiInput.Clients
         $effectiveNoSSLCheck = [bool]$guiInput.NoSSLCheck
+
+        if (-not [string]::IsNullOrWhiteSpace($guiInput.Password)) {
+            $effectivePassword = $guiInput.Password
+        }
     }
 }
 catch {
@@ -157,73 +191,72 @@ catch {
 }
 
 if ($effectiveNoSSLCheck) {
-    # Zertifikatsprüfung deaktivieren
+    # Disable SSL certificate validation.
     [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
 }
 else {
-    # Standardverhalten wiederherstellen
+    # Restore default certificate validation behavior.
     [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $null
 }
 
 foreach ($client in $clients) {
     if (-not (Test-Connection -ComputerName $client -Count 1)) {
-        Write-Host ("$client nicht pingbar")
+        Write-Host ("$client is not reachable via ping")
         continue
     }
 
-    # Ziel-URL des Zero Client Login
-    $baseUrl = "https://$client"   # Zero Client IP
+    # Target URLs for Zero Client login and management.
+    $baseUrl = "https://$client"
     $loginUrl = "$baseUrl/cgi-bin/login"
     $managementUrl = "$baseUrl/configuration/management.html"
 
-    # Anmeldedaten
-    $password = "Administrator"
-    $idleTimeout = "5" # 0 = Never
+    # Login values.
+    $idleTimeout = '5' # 0 = Never
 
-    # Session-Objekt für Cookies
+    # Session object for cookies.
     $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
 
-    # POST-Daten für Login
+    # POST data for login.
     $body = @{
-        "password_value" = $password
-        "idle_timeout" = $idleTimeout
+        'password_value' = $effectivePassword
+        'idle_timeout' = $idleTimeout
     }
 
-    # Login-Request
+    # Login request.
     $response = Invoke-WebRequest -Uri $loginUrl -Method POST -Body $body -WebSession $session -UseBasicParsing
 
-    # Prüfen, ob Login erfolgreich war
-    if ($response.Content -match "The password you entered is incorrect") {
-        Write-Host "Login fehlgeschlagen: Passwort ist falsch!"
+    # Check if login was successful.
+    if ($response.Content -match 'The password you entered is incorrect') {
+        Write-Host 'Login failed: Password is incorrect!'
     }
     else {
-        Write-Host "Login erfolgreich!"
+        Write-Host 'Login successful!'
 
-        # Management-Seite abrufen
+        # Fetch management page.
         $managementResponse = Invoke-WebRequest -Uri $managementUrl -WebSession $session -UseBasicParsing -Verbose -Debug
 
-        # Status ausgeben
-        Write-Host "Management-Seite geladen. HTTP-Status:" $managementResponse.StatusCode
+        # Print status.
+        Write-Host 'Management page loaded. HTTP status:' $managementResponse.StatusCode
     }
 
-    # URL of the management endpoint
+    # URL of the management endpoint.
     $uri = "$baseUrl/cgi-bin/configuration/management"
 
-    # Form data to send (match the hidden form inputs)
+    # Form data to send (match the hidden form inputs).
     $form = @{
-        ebm_address = ""
-        security_level = "0"       # set according to your visible form
-        discovery_mode = "0"       # set according to your visible form
-        internal_em_uri = ""
-        external_em_uri = ""
+        ebm_address = ''
+        security_level = '0'       # set according to your visible form
+        discovery_mode = '0'       # set according to your visible form
+        internal_em_uri = ''
+        external_em_uri = ''
     }
 
-    # Send POST request
+    # Send POST request.
     $response = Invoke-WebRequest -Uri $uri -Method POST -Body $form -UseBasicParsing -WebSession $session -Verbose -Debug
-    Write-Host "POST request gesendet. HTTP-Status:" $response.StatusCode
+    Write-Host 'POST request sent. HTTP status:' $response.StatusCode
 
-    # URL of the management endpoint
+    # URL of the AJAX management endpoint.
     $uri = "$baseUrl/cgi-bin/ajax/configuration/management?clear_topology="
     $response = Invoke-WebRequest -Uri $uri -Method POST -UseBasicParsing -WebSession $session -Verbose -Debug
-    Write-Host "AJAX POST request gesendet. HTTP-Status:" $response.StatusCode
+    Write-Host 'AJAX POST request sent. HTTP status:' $response.StatusCode
 }
