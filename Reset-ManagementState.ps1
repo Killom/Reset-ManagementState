@@ -1,11 +1,11 @@
-﻿# Zertifikatsprüfung deaktivieren
-[System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory = $false)]
     [string[]]$ClientList
 )
+
+# Zertifikatsprüfung deaktivieren
+[System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
 
 function ConvertTo-ClientArray {
     <#
