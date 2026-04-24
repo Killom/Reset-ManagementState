@@ -1,11 +1,12 @@
 ﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory = $false)]
-    [string[]]$ClientList
-)
+    [string[]]$ClientList,
 
-# Zertifikatsprüfung deaktivieren
-[System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+    [Parameter(Mandatory = $false)]
+    [AllowNull()]
+    [Nullable[bool]]$NoSSLCheck = $null
+)
 
 function ConvertTo-ClientArray {
     <#
@@ -51,19 +52,28 @@ function ConvertTo-ClientArray {
     return [string[]]$items
 }
 
-function Get-ClientsFromGui {
+function Get-ClientInputFromGui {
     <#
     .SYNOPSIS
-    Öffnet ein GUI-Fenster zur Eingabe von Client-Adressen.
+    Öffnet ein GUI-Fenster zur Eingabe von Client-Adressen und SSL-Option.
 
     .DESCRIPTION
     Zeigt ein kompaktes Dialogfenster mit einer mehrzeiligen Textbox (Standardhöhe für
-    ca. 10 Zeilen), einer Beschriftung sowie OK/Abbrechen-Buttons. Die eingegebenen Daten
-    werden nach Bestätigung über ConvertTo-ClientArray als [string[]] zurückgegeben.
+    ca. 10 Zeilen), einer Beschriftung sowie OK/Abbrechen-Buttons. Zusätzlich kann per
+    Checkbox festgelegt werden, ob die SSL-Zertifikatsprüfung deaktiviert werden soll.
+
+    .PARAMETER InitialNoSSLCheck
+    Vorbelegung der Checkbox für die SSL-Prüfung.
 
     .OUTPUTS
-    [string[]]
+    [pscustomobject] mit den Eigenschaften:
+    - Clients ([string[]])
+    - NoSSLCheck ([bool])
     #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [bool]$InitialNoSSLCheck
+    )
 
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
@@ -71,7 +81,7 @@ function Get-ClientsFromGui {
     $form = New-Object System.Windows.Forms.Form
     $form.Text = 'Client addresses'
     $form.StartPosition = 'CenterScreen'
-    $form.Size = New-Object System.Drawing.Size(540, 340)
+    $form.Size = New-Object System.Drawing.Size(540, 380)
     $form.FormBorderStyle = 'FixedDialog'
     $form.MaximizeBox = $false
     $form.MinimizeBox = $false
@@ -94,19 +104,25 @@ function Get-ClientsFromGui {
     $lineHeight = [System.Windows.Forms.TextRenderer]::MeasureText('A', $textBox.Font).Height
     $textBox.Height = ($lineHeight * 10) + 10
 
+    $sslCheckBox = New-Object System.Windows.Forms.CheckBox
+    $sslCheckBox.AutoSize = $true
+    $sslCheckBox.Location = New-Object System.Drawing.Point(12, 252)
+    $sslCheckBox.Text = 'Disable SSL certificate validation (-NoSSLCheck)'
+    $sslCheckBox.Checked = $InitialNoSSLCheck
+
     $okButton = New-Object System.Windows.Forms.Button
     $okButton.Text = 'OK'
-    $okButton.Location = New-Object System.Drawing.Point(356, 260)
+    $okButton.Location = New-Object System.Drawing.Point(356, 295)
     $okButton.Size = New-Object System.Drawing.Size(75, 28)
     $okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
 
     $cancelButton = New-Object System.Windows.Forms.Button
     $cancelButton.Text = 'Abbrechen'
-    $cancelButton.Location = New-Object System.Drawing.Point(437, 260)
+    $cancelButton.Location = New-Object System.Drawing.Point(437, 295)
     $cancelButton.Size = New-Object System.Drawing.Size(75, 28)
     $cancelButton.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
 
-    $form.Controls.AddRange(@($label, $textBox, $okButton, $cancelButton))
+    $form.Controls.AddRange(@($label, $textBox, $sslCheckBox, $okButton, $cancelButton))
     $form.AcceptButton = $okButton
     $form.CancelButton = $cancelButton
 
@@ -115,20 +131,38 @@ function Get-ClientsFromGui {
         throw 'Abbruch durch Benutzer.'
     }
 
-    return ConvertTo-ClientArray -InputValues @($textBox.Lines)
+    [pscustomobject]@{
+        Clients = (ConvertTo-ClientArray -InputValues @($textBox.Lines))
+        NoSSLCheck = [bool]$sslCheckBox.Checked
+    }
 }
+
+$defaultNoSSLCheck = $true
+$effectiveNoSSLCheck = if ($null -ne $NoSSLCheck) { [bool]$NoSSLCheck } else { $defaultNoSSLCheck }
 
 try {
     if ($PSBoundParameters.ContainsKey('ClientList') -and $null -ne $ClientList -and $ClientList.Count -gt 0) {
+        # Nur -ClientList unterdrückt die GUI.
         $clients = ConvertTo-ClientArray -InputValues $ClientList
     }
     else {
-        $clients = Get-ClientsFromGui
+        $guiInput = Get-ClientInputFromGui -InitialNoSSLCheck $effectiveNoSSLCheck
+        $clients = $guiInput.Clients
+        $effectiveNoSSLCheck = [bool]$guiInput.NoSSLCheck
     }
 }
 catch {
     Write-Error $_
     exit 1
+}
+
+if ($effectiveNoSSLCheck) {
+    # Zertifikatsprüfung deaktivieren
+    [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+}
+else {
+    # Standardverhalten wiederherstellen
+    [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $null
 }
 
 foreach ($client in $clients) {
